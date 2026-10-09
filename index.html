@@ -3,7 +3,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#09090c">
   <title>Fades OAuth Test Lab</title>
   <link rel="stylesheet" href="/style.css">
@@ -28,52 +28,58 @@
       <div class="panel-heading">
         <div>
           <h2>Application configuration</h2>
-          <p>Enter the Client ID for your registered application.</p>
+          <p>Application credentials are configured securely on the server.</p>
         </div>
-        <span class="status" id="status">Ready</span>
+        <span class="status" id="status">Loading...</span>
       </div>
 
-      <form id="oauthForm">
-        <label for="clientId">Client ID</label>
-        <input id="clientId" name="clientId" autocomplete="off"
-          placeholder="fades_..." required>
-
-        <label>Requested scopes</label>
-        <div class="scopes">
-          <label class="scope">
-            <input type="checkbox" value="openid" checked disabled>
-            <span><b>openid</b><small>Required for sign-in</small></span>
-          </label>
-          <label class="scope">
-            <input type="checkbox" value="profile" checked>
-            <span><b>profile</b><small>Username and profile</small></span>
-          </label>
-          <label class="scope">
-            <input type="checkbox" value="email" checked>
-            <span><b>email</b><small>Email address and verification status</small></span>
-          </label>
+      <div class="app-info">
+        <span class="app-icon">F</span>
+        <div>
+          <strong>Fades OAuth Test Application</strong>
+          <p>Authorization Code + PKCE</p>
         </div>
+      </div>
 
-        <button type="submit" id="signInButton">
-          <span class="button-logo">F</span>
-          Sign in with Fades
-          <span class="arrow">↗</span>
-        </button>
-      </form>
+      <label>Requested scopes</label>
+      <div class="scopes">
+        <label class="scope">
+          <input type="checkbox" value="openid" checked disabled>
+          <span><b>openid</b><small>Required for sign-in</small></span>
+        </label>
+        <label class="scope">
+          <input type="checkbox" value="profile" checked>
+          <span><b>profile</b><small>Username and profile</small></span>
+        </label>
+        <label class="scope">
+          <input type="checkbox" value="email" checked>
+          <span><b>email</b><small>Email and verification status</small></span>
+        </label>
+      </div>
+
+      <button type="button" id="signInButton" disabled>
+        <span class="button-logo">F</span>
+        Sign in with Fades
+        <span class="arrow">↗</span>
+      </button>
+
+      <button type="button" id="signOutButton" class="secondary" hidden>
+        Sign out and revoke tokens
+      </button>
 
       <p class="security-note">
-        <span>🔒</span> Client credentials are handled by the server.
-        Never put your Client Secret in this HTML page.
+        🔒 Your Client Secret stays on the server. Tokens are held in
+        memory while this page is open.
       </p>
     </section>
 
-    <section class="panel result-panel" id="results" hidden>
+    <section class="panel" id="results" hidden>
       <div class="panel-heading">
         <div>
           <h2>Authentication results</h2>
-          <p id="resultDescription">OAuth response</p>
+          <p>Live response from Fades Identity.</p>
         </div>
-        <span class="status success" id="resultStatus">Connected</span>
+        <span class="status success">Authenticated</span>
       </div>
 
       <div id="profile" class="profile"></div>
@@ -83,18 +89,12 @@
 
       <h3>UserInfo response</h3>
       <pre id="profileOutput"></pre>
-
-      <button type="button" class="secondary" id="resetButton">
-        Clear results
-      </button>
     </section>
 
     <section class="panel error-panel" id="errorPanel" hidden>
       <h2>Something went wrong</h2>
       <p id="errorMessage"></p>
-      <button class="secondary" id="retryButton" type="button">
-        Try again
-      </button>
+      <button class="secondary" type="button" id="retryButton">Dismiss</button>
     </section>
 
     <footer>
@@ -104,198 +104,171 @@
   </main>
 
   <script>
-    const ISSUER = "https://api.fades.lol";
     const REDIRECT_URI = "https://cpdswat.xyz/api/auth/callback";
 
-    const form = document.getElementById("oauthForm");
-    const statusEl = document.getElementById("status");
-    const button = document.getElementById("signInButton");
-    const results = document.getElementById("results");
-    const errorPanel = document.getElementById("errorPanel");
+    let config = null;
+    let currentTokens = null;
+
+    const $ = (id) => document.getElementById(id);
+    const signInButton = $("signInButton");
+    const signOutButton = $("signOutButton");
 
     function randomBase64Url(size = 32) {
       const bytes = crypto.getRandomValues(new Uint8Array(size));
       let binary = "";
-      bytes.forEach(byte => binary += String.fromCharCode(byte));
-      return btoa(binary).replace(/\+/g, "-")
-        .replace(/\//g, "_").replace(/=+$/, "");
+
+      for (const byte of bytes) {
+        binary += String.fromCharCode(byte);
+      }
+
+      return btoa(binary)
+        .replace(/\+/g, "-")
+        .replace(/\//g, "_")
+        .replace(/=+$/, "");
     }
 
     async function createChallenge(verifier) {
       const digest = await crypto.subtle.digest(
-        "SHA-256", new TextEncoder().encode(verifier)
+        "SHA-256",
+        new TextEncoder().encode(verifier)
       );
+
       let binary = "";
-      new Uint8Array(digest).forEach(byte =>
-        binary += String.fromCharCode(byte)
-      );
-      return btoa(binary).replace(/\+/g, "-")
-        .replace(/\//g, "_").replace(/=+$/, "");
+
+      for (const byte of new Uint8Array(digest)) {
+        binary += String.fromCharCode(byte);
+      }
+
+      return btoa(binary)
+        .replace(/\+/g, "-")
+        .replace(/\//g, "_")
+        .replace(/=+$/, "");
     }
 
     function showError(message) {
-      errorPanel.hidden = false;
-      document.getElementById("errorMessage").textContent = message;
-      statusEl.textContent = "Failed";
-      button.disabled = false;
+      $("errorPanel").hidden = false;
+      $("errorMessage").textContent = message;
     }
 
     function clearError() {
-      errorPanel.hidden = true;
-      document.getElementById("errorMessage").textContent = "";
+      $("errorPanel").hidden = true;
+      $("errorMessage").textContent = "";
     }
 
-    function safeJson(element, value) {
-      element.textContent = JSON.stringify(value, null, 2);
+    function safeTokenOutput(tokens) {
+      return JSON.stringify({
+        token_type: tokens.token_type,
+        expires_in: tokens.expires_in,
+        scope: tokens.scope,
+        access_token: tokens.access_token ? "[REDACTED]" : undefined,
+        refresh_token: tokens.refresh_token ? "[REDACTED]" : undefined,
+        id_token: tokens.id_token ? "[REDACTED]" : undefined
+      }, null, 2);
     }
 
-    async function handleCallback() {
-      const params = new URLSearchParams(location.search);
-      const code = params.get("code");
-      const returnedState = params.get("state");
-      const oauthError = params.get("error");
-
-      if (oauthError) {
-        history.replaceState({}, "", "/");
-        showError("Fades authorization failed: " + oauthError);
-        return;
-      }
-
-      if (!code) return;
-
-      // Keep the registered callback URL exactly as configured.
-      history.replaceState({}, "", "/api/auth/callback");
-
-      const savedState = sessionStorage.getItem("fades_oauth_state");
-      const verifier = sessionStorage.getItem("fades_oauth_verifier");
-      const clientId = sessionStorage.getItem("fades_oauth_client_id");
-
-      sessionStorage.removeItem("fades_oauth_state");
-      sessionStorage.removeItem("fades_oauth_verifier");
-      sessionStorage.removeItem("fades_oauth_client_id");
-
-      if (!savedState || returnedState !== savedState || !verifier || !clientId) {
-        showError("OAuth state validation failed. Please start again.");
-        return;
-      }
-
-      button.disabled = true;
-      statusEl.textContent = "Exchanging code...";
-
-      try {
-        const tokenResponse = await fetch("/api/token", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            code,
-            code_verifier: verifier,
-            client_id: clientId,
-            redirect_uri: REDIRECT_URI
-          })
-        });
-
-        const tokenData = await tokenResponse.json();
-
-        if (!tokenResponse.ok || !tokenData.access_token) {
-          throw new Error(tokenData.error_description ||
-            tokenData.error || "Token exchange failed.");
-        }
-
-        // Do not display the raw bearer or refresh tokens.
-        const safeTokens = { ...tokenData };
-        delete safeTokens.access_token;
-        delete safeTokens.refresh_token;
-        delete safeTokens.id_token;
-
-        document.getElementById("tokenOutput").textContent =
-          JSON.stringify({
-            ...safeTokens,
-            access_token: "[REDACTED]",
-            refresh_token: tokenData.refresh_token ? "[REDACTED]" : undefined,
-            id_token: tokenData.id_token ? "[REDACTED]" : undefined
-          }, null, 2);
-
-        const userResponse = await fetch("/api/userinfo", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            access_token: tokenData.access_token,
-            client_id: clientId
-          })
-        });
-
-        const userData = await userResponse.json();
-
-        if (!userResponse.ok) {
-          throw new Error(userData.error || "UserInfo request failed.");
-        }
-
-        document.getElementById("profileOutput").textContent =
-          JSON.stringify(userData, null, 2);
-
-        const name = userData.name || userData.preferred_username || "Fades user";
-        const avatar = userData.picture;
-
-        document.getElementById("profile").innerHTML = "";
-
-        const avatarEl = document.createElement(avatar ? "img" : "div");
-        avatarEl.className = "avatar";
-
-        if (avatar) {
-          avatarEl.src = avatar;
-          avatarEl.alt = "";
-          avatarEl.referrerPolicy = "no-referrer";
-        } else {
-          avatarEl.textContent = name.charAt(0).toUpperCase();
-        }
-
-        const identity = document.createElement("div");
-        const nameEl = document.createElement("strong");
-        nameEl.textContent = name;
-
-        const emailEl = document.createElement("p");
-        emailEl.textContent = userData.email || "Email not provided";
-
-        identity.append(nameEl, emailEl);
-        document.getElementById("profile").append(avatarEl, identity);
-
-        document.getElementById("results").hidden = false;
-        document.getElementById("resultDescription").textContent =
-          "Authorization code exchanged and UserInfo retrieved.";
-        statusEl.textContent = "Authenticated";
-        button.disabled = false;
-      } catch (error) {
-        showError(error.message || "Authentication failed.");
-      }
-    }
-
-    form.addEventListener("submit", async event => {
-      event.preventDefault();
-      clearError();
-
-      const clientId = document.getElementById("clientId").value.trim();
-      if (!clientId) return showError("Enter your Client ID.");
-
-      const scopes = ["openid"];
-      document.querySelectorAll(".scopes input:checked").forEach(input => {
-        if (input.value !== "openid") scopes.push(input.value);
+    async function loadUserInfo() {
+      const response = await fetch("/api/userinfo", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          access_token: currentTokens.access_token
+        })
       });
 
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || "Unable to load UserInfo.");
+      }
+
+      $("profileOutput").textContent = JSON.stringify(data, null, 2);
+
+      const profile = $("profile");
+      profile.replaceChildren();
+
+      const name = data.name || data.preferred_username || "Fades user";
+
+      if (data.picture) {
+        const avatar = document.createElement("img");
+        avatar.className = "avatar";
+        avatar.src = data.picture;
+        avatar.alt = "";
+        avatar.referrerPolicy = "no-referrer";
+        profile.appendChild(avatar);
+      } else {
+        const avatar = document.createElement("div");
+        avatar.className = "avatar";
+        avatar.textContent = name.charAt(0).toUpperCase();
+        profile.appendChild(avatar);
+      }
+
+      const details = document.createElement("div");
+      const heading = document.createElement("strong");
+      heading.textContent = name;
+
+      const email = document.createElement("p");
+      email.textContent = data.email || "Email not provided";
+
+      details.append(heading, email);
+      profile.appendChild(details);
+
+      $("results").hidden = false;
+    }
+
+    async function exchangeCode(code, verifier) {
+      $("status").textContent = "Exchanging code...";
+
+      const response = await fetch("/api/token", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          code,
+          code_verifier: verifier,
+          client_id: config.clientId,
+          redirect_uri: REDIRECT_URI
+        })
+      });
+
+      const data = await response.json();
+
+      if (!response.ok || !data.access_token) {
+        throw new Error(data.error_description || data.error || "Token exchange failed.");
+      }
+
+      currentTokens = data;
+      $("tokenOutput").textContent = safeTokenOutput(data);
+
+      $("status").textContent = "Loading profile...";
+      await loadUserInfo();
+
+      $("status").textContent = "Authenticated";
+      signInButton.hidden = true;
+      signOutButton.hidden = false;
+    }
+
+    async function startSignIn() {
+      clearError();
+
       try {
-        button.disabled = true;
-        statusEl.textContent = "Preparing sign-in...";
+        signInButton.disabled = true;
+        $("status").textContent = "Preparing sign-in...";
 
         const verifier = randomBase64Url(32);
         const challenge = await createChallenge(verifier);
         const state = randomBase64Url(32);
         const nonce = randomBase64Url(32);
 
+        const scopes = ["openid"];
+
+        document.querySelectorAll(".scopes input:checked").forEach((input) => {
+          if (input.value !== "openid") scopes.push(input.value);
+        });
+
         sessionStorage.setItem("fades_oauth_state", state);
         sessionStorage.setItem("fades_oauth_verifier", verifier);
-        sessionStorage.setItem("fades_oauth_client_id", clientId);
 
         const params = new URLSearchParams({
-          client_id: clientId,
+          client_id: config.clientId,
           redirect_uri: REDIRECT_URI,
           response_type: "code",
           scope: scopes.join(" "),
@@ -305,26 +278,114 @@
           code_challenge_method: "S256"
         });
 
-        location.href = `${ISSUER}/oauth/authorize?${params}`;
+        location.href = `${config.issuer}/oauth/authorize?${params}`;
       } catch (error) {
-        showError(error.message || "Unable to start sign-in.");
+        $("status").textContent = "Error";
+        showError(error.message);
+        signInButton.disabled = false;
       }
-    });
+    }
 
-    document.getElementById("resetButton").addEventListener("click", () => {
-      results.hidden = true;
-      document.getElementById("profile").replaceChildren();
-      document.getElementById("tokenOutput").textContent = "";
-      document.getElementById("profileOutput").textContent = "";
-      statusEl.textContent = "Ready";
-    });
-
-    document.getElementById("retryButton").addEventListener("click", () => {
+    async function signOut() {
       clearError();
-      statusEl.textContent = "Ready";
-    });
+      signOutButton.disabled = true;
+      $("status").textContent = "Signing out...";
 
-    handleCallback();
+      try {
+        if (currentTokens) {
+          const response = await fetch("/api/revoke", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              access_token: currentTokens.access_token,
+              refresh_token: currentTokens.refresh_token
+            })
+          });
+
+          if (!response.ok) {
+            throw new Error("Token revocation request failed.");
+          }
+        }
+      } catch (error) {
+        showError(
+          "Your local test session will be cleared, but revocation could not be confirmed. " +
+          error.message
+        );
+      } finally {
+        // Always clear the local test session.
+        currentTokens = null;
+        sessionStorage.removeItem("fades_oauth_state");
+        sessionStorage.removeItem("fades_oauth_verifier");
+
+        $("results").hidden = true;
+        $("profile").replaceChildren();
+        $("tokenOutput").textContent = "";
+        $("profileOutput").textContent = "";
+
+        signOutButton.hidden = true;
+        signOutButton.disabled = false;
+        signInButton.hidden = false;
+        signInButton.disabled = !config;
+        $("status").textContent = "Signed out";
+      }
+    }
+
+    async function initialize() {
+      try {
+        const response = await fetch("/api/config", {
+          cache: "no-store"
+        });
+
+        config = await response.json();
+
+        if (!response.ok || !config.clientId || !config.issuer) {
+          throw new Error(config.error || "Unable to load app configuration.");
+        }
+
+        signInButton.disabled = false;
+        $("status").textContent = "Ready";
+
+        const params = new URLSearchParams(location.search);
+        const code = params.get("code");
+        const state = params.get("state");
+        const oauthError = params.get("error");
+
+        // Remove callback parameters from the address bar.
+        if (location.search) {
+          history.replaceState({}, "", "/");
+        }
+
+        if (oauthError) {
+          sessionStorage.removeItem("fades_oauth_state");
+          sessionStorage.removeItem("fades_oauth_verifier");
+          throw new Error("Fades authorization failed: " + oauthError);
+        }
+
+        if (code) {
+          const expectedState = sessionStorage.getItem("fades_oauth_state");
+          const verifier = sessionStorage.getItem("fades_oauth_verifier");
+
+          sessionStorage.removeItem("fades_oauth_state");
+          sessionStorage.removeItem("fades_oauth_verifier");
+
+          if (!expectedState || state !== expectedState || !verifier) {
+            throw new Error("OAuth state validation failed. Start again.");
+          }
+
+          await exchangeCode(code, verifier);
+        }
+      } catch (error) {
+        $("status").textContent = "Error";
+        showError(error.message || "Initialization failed.");
+      }
+    }
+
+    signInButton.addEventListener("click", startSignIn);
+    signOutButton.addEventListener("click", signOut);
+
+    $("retryButton").addEventListener("click", clearError);
+
+    initialize();
   </script>
 </body>
 </html>
