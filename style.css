@@ -399,3 +399,54 @@ footer {
     align-items: center;
   }
 }
+
+
+.app-info {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  padding: 15px;
+  margin-bottom: 25px;
+  background: #0b0b10;
+  border: 1px solid var(--border);
+  border-radius: 11px;
+}
+
+.app-icon {
+  width: 42px;
+  height: 42px;
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  border-radius: 12px;
+  background: linear-gradient(145deg, #c4b5fd, #7c3aed);
+  color: white;
+  font-weight: 850;
+  font-size: 19px;
+}
+
+.app-info strong {
+  font-size: 13px;
+}
+
+.app-info p {
+  margin: 5px 0 0;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.panel > label {
+  display: block;
+  margin: 20px 0 10px;
+  color: #d7d7df;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+#signOutButton {
+  margin-top: 12px;
+}
+
+#signOutButton[hidden] {
+  display: none !important;
+}
